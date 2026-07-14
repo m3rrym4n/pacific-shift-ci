@@ -2,6 +2,35 @@
 
 Shared GitHub Actions building blocks for Pacific Shift Labs repositories.
 
+## Reusable quality gate
+
+`.github/workflows/quality-gate.yml` runs pinned versions of ruff, mypy,
+pytest/pytest-cov, Bandit, Gitleaks, and Trivy. During initial rollout the first
+five tools report their findings in distinct job-summary sections without
+blocking. Trivy scans a locally built caller image and blocks on HIGH or
+CRITICAL vulnerabilities.
+
+Callers should place the quality job before build/deploy with `needs`:
+
+```yaml
+jobs:
+  quality:
+    uses: m3rrym4n/pacific-shift-ci/.github/workflows/quality-gate.yml@main
+    with:
+      runner_labels: '["self-hosted", "zimaos", "my-app"]'
+      coverage_threshold: 60
+      source_paths: app tests
+      bandit_paths: app
+
+  deploy:
+    needs: quality
+    uses: m3rrym4n/pacific-shift-ci/.github/workflows/build-deploy-verify.yml@main
+    # Existing build/deploy inputs and secrets follow.
+```
+
+The caller owns event triggers. Configure `push` and `pull_request` for `dev`;
+the reusable workflow itself intentionally uses only `workflow_call`.
+
 ## Reusable development deployment
 
 `.github/workflows/build-deploy-verify.yml` builds a caller repository with the

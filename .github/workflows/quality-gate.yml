@@ -1,0 +1,242 @@
+name: Reusable Quality Gate
+
+on:
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: JSON array of runner labels
+        required: true
+        type: string
+      python_version:
+        description: Python version used by the quality tools
+        default: '3.12'
+        type: string
+      install_command:
+        description: Command that installs the caller's runtime and test dependencies
+        default: python -m pip install -r requirements.txt
+        type: string
+      source_paths:
+        description: Space-separated Python paths checked by ruff and mypy
+        default: .
+        type: string
+      bandit_paths:
+        description: Space-separated Python paths checked recursively by bandit
+        default: .
+        type: string
+      test_paths:
+        description: Space-separated paths passed to pytest
+        default: tests
+        type: string
+      coverage_source:
+        description: Package or path measured by pytest-cov
+        default: app
+        type: string
+      coverage_threshold:
+        description: Minimum coverage percentage (report-only during initial rollout)
+        default: 60
+        type: number
+      build_context:
+        description: Docker build context for the image scanned by Trivy
+        default: .
+        type: string
+      dockerfile:
+        description: Dockerfile for the image scanned by Trivy
+        default: Dockerfile
+        type: string
+      build_args:
+        description: Newline-delimited Docker build arguments
+        default: ''
+        type: string
+      prepare_command:
+        description: Optional command run before the scan image is built
+        default: ''
+        type: string
+
+jobs:
+  quality:
+    name: Quality and security
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+
+      - name: Install caller dependencies and pinned quality tools
+        env:
+          INSTALL_COMMAND: ${{ inputs.install_command }}
+        run: |
+          set -eu
+          sh -eu -c "$INSTALL_COMMAND"
+          python -m pip install \
+            ruff==0.15.21 \
+            mypy==2.3.0 \
+            pytest==9.1.1 \
+            pytest-cov==7.1.0 \
+            bandit==1.9.4
+
+      - name: Ruff 0.15.21 lint and format (report-only)
+        env:
+          SOURCE_PATHS: ${{ inputs.source_paths }}
+        run: |
+          set +e
+          # source_paths intentionally supports multiple shell-separated paths.
+          # shellcheck disable=SC2086
+          python -m ruff check --output-format concise $SOURCE_PATHS 2>&1 | tee ruff-lint.txt
+          lint_status=${PIPESTATUS[0]}
+          # shellcheck disable=SC2086
+          python -m ruff format --check $SOURCE_PATHS 2>&1 | tee ruff-format.txt
+          format_status=${PIPESTATUS[0]}
+          issue_count=$(grep -Ec '^[^[:space:]].*:[0-9]+:[0-9]+:' ruff-lint.txt || true)
+          {
+            echo '### Ruff 0.15.21'
+            echo
+            echo "- Lint findings: $issue_count"
+            echo "- Lint exit status: $lint_status (report-only)"
+            echo "- Format exit status: $format_status (report-only)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: mypy 2.3.0 type checking (report-only)
+        env:
+          SOURCE_PATHS: ${{ inputs.source_paths }}
+        run: |
+          set +e
+          # source_paths intentionally supports multiple shell-separated paths.
+          # shellcheck disable=SC2086
+          python -m mypy \
+            --ignore-missing-imports \
+            --allow-untyped-defs \
+            --allow-incomplete-defs \
+            --no-check-untyped-defs \
+            $SOURCE_PATHS 2>&1 | tee mypy.txt
+          status=${PIPESTATUS[0]}
+          finding_count=$(grep -c ': error:' mypy.txt || true)
+          {
+            echo '### mypy 2.3.0'
+            echo
+            echo "- Findings: $finding_count"
+            echo "- Exit status: $status (report-only)"
+            echo '- Untyped function bodies are reported as notes but are not required to pass.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: pytest 9.1.1 and pytest-cov 7.1.0 (report-only)
+        env:
+          TEST_PATHS: ${{ inputs.test_paths }}
+          COVERAGE_SOURCE: ${{ inputs.coverage_source }}
+          COVERAGE_THRESHOLD: ${{ inputs.coverage_threshold }}
+        run: |
+          set +e
+          # test_paths intentionally supports multiple shell-separated paths.
+          # shellcheck disable=SC2086
+          python -m pytest $TEST_PATHS \
+            --cov="$COVERAGE_SOURCE" \
+            --cov-report=term-missing \
+            --cov-report=json:coverage.json \
+            --cov-fail-under="$COVERAGE_THRESHOLD" 2>&1 | tee pytest.txt
+          status=${PIPESTATUS[0]}
+          summary=$(tail -n 1 pytest.txt)
+          coverage=$(python -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered_display'])" 2>/dev/null || echo unavailable)
+          {
+            echo '### pytest 9.1.1 / pytest-cov 7.1.0'
+            echo
+            echo "- Result: $summary"
+            echo "- Coverage: $coverage% (configured threshold: $COVERAGE_THRESHOLD%)"
+            echo "- Exit status: $status (report-only)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Bandit 1.9.4 SAST (report-only)
+        env:
+          BANDIT_PATHS: ${{ inputs.bandit_paths }}
+        run: |
+          set +e
+          # bandit_paths intentionally supports multiple shell-separated paths.
+          # shellcheck disable=SC2086
+          python -m bandit -r $BANDIT_PATHS -f json -o bandit.json
+          status=$?
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          try:
+              report = json.load(open('bandit.json', encoding='utf-8'))
+              results = report.get('results', [])
+          except (OSError, json.JSONDecodeError):
+              results = []
+          print('### Bandit 1.9.4\n')
+          print(f'- Findings: {len(results)}')
+          for severity in ('HIGH', 'MEDIUM', 'LOW'):
+              print(f"- {severity.title()}: {sum(r.get('issue_severity') == severity for r in results)}")
+          PY
+          echo "- Exit status: $status (report-only)" >> "$GITHUB_STEP_SUMMARY"
+          test ! -s bandit.json || python -m json.tool bandit.json
+          exit 0
+
+      - name: Gitleaks 8.30.0 commit and diff scan (report-only)
+        id: gitleaks
+        continue-on-error: true
+        uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_VERSION: 8.30.0
+
+      - name: Summarize Gitleaks
+        env:
+          GITLEAKS_OUTCOME: ${{ steps.gitleaks.outcome }}
+        run: |
+          {
+            echo '### Gitleaks 8.30.0'
+            echo
+            echo "- Action outcome: $GITLEAKS_OUTCOME (report-only)"
+            echo '- Scope: commit history and event diff (full-history checkout).'
+            echo '- Individual findings, when present, are shown in the Gitleaks step log and annotations.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare container build context
+        if: inputs.prepare_command != ''
+        env:
+          PREPARE_COMMAND: ${{ inputs.prepare_command }}
+        run: sh -eu -c "$PREPARE_COMMAND"
+
+      - name: Build container image for Trivy
+        env:
+          BUILD_CONTEXT: ${{ inputs.build_context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_ARGS: ${{ inputs.build_args }}
+        run: |
+          set -eu
+          args=
+          while IFS= read -r build_arg; do
+            test -z "$build_arg" || args="$args --build-arg $build_arg"
+          done <<EOF
+          $BUILD_ARGS
+          EOF
+          # build_args is a trusted workflow input supplied by the caller.
+          # shellcheck disable=SC2086
+          docker build $args -f "$DOCKERFILE" -t "quality-gate:${GITHUB_SHA}" "$BUILD_CONTEXT"
+
+      - name: Trivy 0.69.3 HIGH/CRITICAL image scan (blocking)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: quality-gate:${{ github.sha }}
+          format: table
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          version: v0.69.3
+
+      - name: Summarize Trivy
+        if: always()
+        run: |
+          {
+            echo '### Trivy 0.69.3'
+            echo
+            echo '- Scanned the locally built caller image for HIGH and CRITICAL OS/library vulnerabilities.'
+            echo '- HIGH/CRITICAL findings are blocking; see the Trivy step output for the finding count and details.'
+          } >> "$GITHUB_STEP_SUMMARY"
