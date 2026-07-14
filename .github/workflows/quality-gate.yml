@@ -206,11 +206,13 @@ jobs:
 
       - name: Build container image for Trivy
         env:
+          DOCKER_CONFIG: ${{ runner.temp }}/quality-gate-docker-config
           BUILD_CONTEXT: ${{ inputs.build_context }}
           DOCKERFILE: ${{ inputs.dockerfile }}
           BUILD_ARGS: ${{ inputs.build_args }}
         run: |
           set -eu
+          mkdir -p "$DOCKER_CONFIG"
           args=
           while IFS= read -r build_arg; do
             test -z "$build_arg" || args="$args --build-arg $build_arg"
@@ -223,6 +225,8 @@ jobs:
 
       - name: Trivy 0.69.3 HIGH/CRITICAL image scan (blocking)
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/quality-gate-docker-config
         with:
           image-ref: quality-gate:${{ github.sha }}
           format: table
