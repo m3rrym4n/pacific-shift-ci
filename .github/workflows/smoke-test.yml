@@ -1,0 +1,10 @@
+name: Smoke Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "pacific-shift-ci smoke test — $(date -u)"
