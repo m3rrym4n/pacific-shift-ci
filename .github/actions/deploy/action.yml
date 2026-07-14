@@ -1,0 +1,33 @@
+name: Dockhand snapshot deployment
+description: Replace only a container image, verify it, and roll back on failure
+inputs:
+  image_ref:
+    required: true
+  container_name:
+    required: true
+  app_url:
+    required: true
+  health_path:
+    default: /
+  strong_verify_command:
+    default: ''
+  simulate_failure:
+    default: 'false'
+  dockhand_url:
+    required: true
+  dockhand_token:
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: sh
+      env:
+        IMAGE_REF: ${{ inputs.image_ref }}
+        CONTAINER_NAME: ${{ inputs.container_name }}
+        APP_URL: ${{ inputs.app_url }}
+        HEALTH_PATH: ${{ inputs.health_path }}
+        STRONG_VERIFY_COMMAND: ${{ inputs.strong_verify_command }}
+        DEPLOY_SIMULATE_FAILURE: ${{ inputs.simulate_failure }}
+        DOCKHAND_URL: ${{ inputs.dockhand_url }}
+        DOCKHAND_TOKEN: ${{ inputs.dockhand_token }}
+      run: "$GITHUB_ACTION_PATH/deploy.sh"
