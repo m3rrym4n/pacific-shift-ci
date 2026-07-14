@@ -1,0 +1,131 @@
+name: Reusable Build, Deploy, and Verify
+
+on:
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: JSON array of self-hosted runner labels
+        required: true
+        type: string
+      registry:
+        description: OCI registry host and port
+        default: 192.168.1.68:5050
+        type: string
+      image_repository:
+        description: Repository path within the registry
+        required: true
+        type: string
+      tag_prefix:
+        description: Prefix for immutable and rolling image tags
+        default: dev
+        type: string
+      container_name:
+        description: Existing Dockhand-managed container to replace
+        required: true
+        type: string
+      app_url:
+        description: Published application base URL visible to the runner
+        required: true
+        type: string
+      health_path:
+        description: Baseline path that must return HTTP 2xx
+        default: /
+        type: string
+      build_context:
+        default: .
+        type: string
+      dockerfile:
+        default: Dockerfile
+        type: string
+      build_args:
+        description: Newline-delimited Docker build arguments
+        default: ''
+        type: string
+      prepare_command:
+        description: Optional shell run before building
+        default: ''
+        type: string
+      strong_verify_command:
+        description: Optional application-specific shell check after generic verification
+        default: ''
+        type: string
+      environment:
+        default: dev
+        type: string
+      buildkit_builder:
+        default: zimaos-remote
+        type: string
+      buildkit_address:
+        default: unix:///run/buildkit/buildkitd.sock
+        type: string
+      simulate_failure:
+        description: Force failure after replacement to prove rollback
+        default: false
+        type: boolean
+    secrets:
+      DOCKHAND_URL:
+        required: true
+      DOCKHAND_TOKEN:
+        required: true
+
+jobs:
+  build-and-push:
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    outputs:
+      image_ref: ${{ steps.tags.outputs.image_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare build context
+        if: inputs.prepare_command != ''
+        env:
+          PREPARE_COMMAND: ${{ inputs.prepare_command }}
+        run: sh -eu -c "$PREPARE_COMMAND"
+
+      - name: Ensure remote buildx builder exists
+        env:
+          BUILDER: ${{ inputs.buildkit_builder }}
+          BUILDKIT_ADDRESS: ${{ inputs.buildkit_address }}
+        run: |
+          docker buildx inspect "$BUILDER" >/dev/null 2>&1 || \
+            docker buildx create --name "$BUILDER" --driver remote "$BUILDKIT_ADDRESS"
+          docker buildx use "$BUILDER"
+
+      - name: Compute image tags
+        id: tags
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+        run: |
+          short_sha=$(git rev-parse --short "$GITHUB_SHA")
+          image_ref="$REGISTRY/$IMAGE_REPOSITORY:$TAG_PREFIX-$short_sha"
+          echo "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
+          echo "latest_ref=$REGISTRY/$IMAGE_REPOSITORY:$TAG_PREFIX-latest" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.build_context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          build-args: ${{ inputs.build_args }}
+          tags: |
+            ${{ steps.tags.outputs.image_ref }}
+            ${{ steps.tags.outputs.latest_ref }}
+
+  deploy-and-verify:
+    needs: build-and-push
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Snapshot, deploy, verify, and rollback on failure
+        uses: m3rrym4n/pacific-shift-ci/.github/actions/deploy@main
+        with:
+          image_ref: ${{ needs.build-and-push.outputs.image_ref }}
+          container_name: ${{ inputs.container_name }}
+          app_url: ${{ inputs.app_url }}
+          health_path: ${{ inputs.health_path }}
+          strong_verify_command: ${{ inputs.strong_verify_command }}
+          simulate_failure: ${{ inputs.simulate_failure }}
+          dockhand_url: ${{ secrets.DOCKHAND_URL }}
+          dockhand_token: ${{ secrets.DOCKHAND_TOKEN }}
