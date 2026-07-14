@@ -190,6 +190,9 @@ jobs:
           test ! -s bandit.json || python -m json.tool bandit.json
           exit 0
 
+      - name: Clear stale Gitleaks installer temporary file
+        run: rm -f /tmp/gitleaks.tmp
+
       - name: Gitleaks 8.30.0 commit and diff scan (report-only)
         id: gitleaks
         continue-on-error: true
