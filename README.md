@@ -7,7 +7,7 @@ Shared GitHub Actions building blocks for Pacific Shift Labs repositories.
 `.github/workflows/quality-gate.yml` runs pinned versions of ruff, mypy,
 pytest/pytest-cov, Bandit, Gitleaks, and Trivy. During initial rollout the first
 five tools report their findings in distinct job-summary sections without
-blocking. Remote BuildKit exports the caller image as a runner-local OCI tar;
+blocking. Remote BuildKit exports the caller image as a runner-local image tar;
 Trivy scans that built image without pushing it and blocks on HIGH or CRITICAL
 vulnerabilities.
 
