@@ -30,7 +30,14 @@ jobs:
 ```
 
 The caller owns event triggers. Configure `push` and `pull_request` for `dev`;
-the reusable workflow itself intentionally uses only `workflow_call`.
+the reusable workflow itself intentionally uses only `workflow_call`. Callers
+must grant the read-only token permissions used by checkout and Gitleaks:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: read
+```
 
 ## Reusable development deployment
 

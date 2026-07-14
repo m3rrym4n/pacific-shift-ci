@@ -197,6 +197,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITLEAKS_VERSION: 8.30.0
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
 
       - name: Summarize Gitleaks
         env:
