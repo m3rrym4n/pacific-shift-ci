@@ -64,6 +64,9 @@ jobs:
   quality:
     name: Quality and security
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Check out complete history
         uses: actions/checkout@v7.0.0
@@ -147,11 +150,12 @@ jobs:
           python -m pytest $TEST_PATHS \
             --cov="$COVERAGE_SOURCE" \
             --cov-report=term-missing \
-            --cov-report=json:coverage.json \
             --cov-fail-under="$COVERAGE_THRESHOLD" 2>&1 | tee pytest.txt
           status=${PIPESTATUS[0]}
           summary=$(tail -n 1 pytest.txt)
-          coverage=$(python -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered_display'])" 2>/dev/null || echo unavailable)
+          coverage=$(awk '/^TOTAL[[:space:]]/ { print $NF }' pytest.txt | tail -n 1)
+          coverage=${coverage:-unavailable}
+          coverage=${coverage%\%}
           {
             echo '### pytest 9.1.1 / pytest-cov 7.1.0'
             echo
@@ -236,7 +240,7 @@ jobs:
           # shellcheck disable=SC2086
           docker buildx build \
             --builder "$BUILDER" \
-            --output "type=oci,dest=$SCAN_IMAGE_TAR" \
+            --output "type=docker,dest=$SCAN_IMAGE_TAR" \
             $args \
             -f "$DOCKERFILE" \
             "$BUILD_CONTEXT"
@@ -259,6 +263,6 @@ jobs:
           {
             echo '### Trivy 0.69.3'
             echo
-            echo '- Scanned the remote-BuildKit OCI image export for HIGH and CRITICAL OS/library vulnerabilities.'
+            echo '- Scanned the remote-BuildKit Docker image export for HIGH and CRITICAL OS/library vulnerabilities.'
             echo '- HIGH/CRITICAL findings are blocking; see the Trivy step output for the finding count and details.'
           } >> "$GITHUB_STEP_SUMMARY"
