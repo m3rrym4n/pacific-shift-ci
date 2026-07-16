@@ -3,6 +3,9 @@ description: Replace only a container image, verify it, and roll back on failure
 inputs:
   image_ref:
     required: true
+  expected_image_revision:
+    description: Full commit SHA expected in the image's OCI revision label
+    required: false
   container_name:
     required: true
   app_url:
@@ -23,6 +26,7 @@ runs:
     - shell: sh
       env:
         IMAGE_REF: ${{ inputs.image_ref }}
+        EXPECTED_IMAGE_REVISION: ${{ inputs.expected_image_revision }}
         CONTAINER_NAME: ${{ inputs.container_name }}
         APP_URL: ${{ inputs.app_url }}
         HEALTH_PATH: ${{ inputs.health_path }}

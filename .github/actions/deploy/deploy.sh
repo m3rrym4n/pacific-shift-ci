@@ -44,7 +44,12 @@ create_payload_from_inspect() {
         name: $name, image: $image,
         cmd: .Config.Cmd, entrypoint: .Config.Entrypoint,
         workingDir: .Config.WorkingDir, user: .Config.User,
-        env: (.Config.Env // []), labels: (.Config.Labels // {}),
+        env: (.Config.Env // []),
+        # OCI image annotations belong to the selected image. Copying them from
+        # the old container overrides the new image metadata at container create.
+        labels: ((.Config.Labels // {}) | with_entries(
+            select(.key | startswith("org.opencontainers.image.") | not)
+        )),
         volumeBinds: (.HostConfig.Binds // []),
         ports: ((.HostConfig.PortBindings // {}) | with_entries(.value = .value[0])),
         restartPolicy: (.HostConfig.RestartPolicy.Name // "no"),
@@ -119,6 +124,13 @@ details=$(api GET "/api/containers/$CONTAINER_NAME?env=1")
 printf '%s' "$details" | jq -e '.State.Running == true' >/dev/null || fail "container is not running"
 actual_image=$(printf '%s' "$details" | jq -er '.Config.Image') || fail "container has no image"
 [ "$actual_image" = "$IMAGE_REF" ] || fail "expected $IMAGE_REF, found $actual_image"
+if [ -n "${EXPECTED_IMAGE_REVISION:-}" ]; then
+    actual_revision=$(printf '%s' "$details" | jq -er \
+        '.Config.Labels["org.opencontainers.image.revision"]') || \
+        fail "container has no org.opencontainers.image.revision label"
+    [ "$actual_revision" = "$EXPECTED_IMAGE_REVISION" ] || \
+        fail "expected image revision $EXPECTED_IMAGE_REVISION, found $actual_revision"
+fi
 
 attempt=1
 while ! curl --fail --silent --show-error --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; do
