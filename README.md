@@ -47,9 +47,14 @@ existing container through Dockhand, verifies it, and restores the exact
 previous container configuration if deployment or verification fails.
 
 The target container must already exist. Its inspected configuration is the
-deployment template: command, entrypoint, environment, labels, bind mounts,
-ports, restart policy, network mode, privilege, user, working directory, and
-read-only-root setting are preserved. Only the image is changed.
+deployment template: command, entrypoint, environment, container-specific
+labels, bind mounts, ports, restart policy, network mode, privilege, user,
+working directory, and read-only-root setting are preserved. OCI image labels
+(`org.opencontainers.image.*`) come from the newly selected image; copying
+those labels from the old container would override the new image metadata.
+Only the image and its image-owned metadata are changed. Deployment also checks
+that the running container's OCI revision is the full commit used to compute
+its immutable tag, and rolls back if they differ.
 
 Example caller:
 

@@ -73,6 +73,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     outputs:
       image_ref: ${{ steps.tags.outputs.image_ref }}
+      revision: ${{ steps.tags.outputs.revision }}
     steps:
       - uses: actions/checkout@v4
 
@@ -98,10 +99,12 @@ jobs:
           IMAGE_REPOSITORY: ${{ inputs.image_repository }}
           TAG_PREFIX: ${{ inputs.tag_prefix }}
         run: |
-          short_sha=$(git rev-parse --short "$GITHUB_SHA")
+          revision=$(git rev-parse "$GITHUB_SHA")
+          short_sha=$(git rev-parse --short "$revision")
           image_ref="$REGISTRY/$IMAGE_REPOSITORY:$TAG_PREFIX-$short_sha"
           echo "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
           echo "latest_ref=$REGISTRY/$IMAGE_REPOSITORY:$TAG_PREFIX-latest" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
         with:
@@ -116,7 +119,7 @@ jobs:
             org.opencontainers.image.title=${{ inputs.image_repository }}
             org.opencontainers.image.vendor=Pacific Shift Labs
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.tags.outputs.revision }}
 
   deploy-and-verify:
     needs: build-and-push
@@ -127,6 +130,7 @@ jobs:
         uses: m3rrym4n/pacific-shift-ci/.github/actions/deploy@main
         with:
           image_ref: ${{ needs.build-and-push.outputs.image_ref }}
+          expected_image_revision: ${{ needs.build-and-push.outputs.revision }}
           container_name: ${{ inputs.container_name }}
           app_url: ${{ inputs.app_url }}
           health_path: ${{ inputs.health_path }}
